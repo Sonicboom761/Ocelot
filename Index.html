@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Jumping paladin fighter</title>
+  <style>
+    :root{
+      --ui: #16161a;
+      --ui-2:#242629;
+      --txt:#fffffe;
+      --acc:#ff5d8f;
+      --good:#00d68f;
+      --warn:#ffd166;
+      --bad:#ef476f;
+    }
+    html,body{
+      height:100%;
+      margin:0;
+      background:#141b2d;
+      color:var(--txt);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      overflow:hidden;
+    }
+    #wrap{position:relative; width:100vw; height:100vh;}
+    canvas{display:block; width:100%; height:100%; image-rendering: crisp-edges; image-rendering: pixelated;}
+    .hud{position:absolute; left:0; top:0; width:100%; padding:10px 16px; display:flex; gap:14px; align-items:center; pointer-events:none;}
+    .badge{background:rgba(0,0,0,.35); padding:6px 10px; border-radius:10px; font-weight:700; letter-spacing:.3px;}
+    .title{position:absolute; left:50%; transform:translateX(-50%); top:10px; font-weight:900; background:linear-gradient(90deg,#ff9a9e,#fad0c4,#fbc2eb,#a18cd1,#fbc2eb,#ff9a9e); -webkit-background-clip:text; background-clip:text; color:transparent; text-shadow:0 2px 10px rgba(0,0,0,.35); font-size:clamp(20px,3.2vw,36px)}
+    .overlay{position:absolute; inset:0; display:grid; place-items:center; background:radial-gradient(ellipse at 50% 35%, rgba(15,20,35,.6), rgba(10,12,22,.85));}
+    .card{background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.15); border-radius:16px; padding:18px 20px; width:min(92vw,520px); box-shadow:0 10px 40px rgba(0,0,0,.45)}
+    .card h1{margin:.2rem 0 0.6rem; font-size:28px}
+    .card p{opacity:.9; line-height:1.45}
+    .row{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px}
+    .btn{pointer-events:auto; border:0; padding:10px 16px; border-radius:12px; background:linear-gradient(180deg,var(--acc),#fb3b7c); color:white; font-weight:800; letter-spacing:.3px; cursor:pointer; box-shadow:0 6px 0 #b22656, 0 10px 22px rgba(0,0,0,.35); transition:transform .08s ease}
+    .btn:active{transform:translateY(2px); box-shadow:0 4px 0 #b22656, 0 6px 16px rgba(0,0,0,.35)}
+    .hint{font-size:14px; opacity:.8; margin-top:8px}
+    .chip{background:rgba(255,255,255,.08); padding:6px 10px; border-radius:999px;}
+    .a11y{position:absolute; left:-9999px}
+  </style>
+</head>
+<body>
+  <div id="wrap" aria-label="Jumping paladin fighter game">
+    <canvas id="game" width="1280" height="720"></canvas>
+
+    <div class="hud" aria-live="polite">
+      <div class="badge">Score: <span id="score">0</span></div>
+      <div class="badge">Best: <span id="best">0</span></div>
+      <div class="badge chip" id="speedBadge">Speed x1.0</div>
+      <div class="title">Jumping paladin fighter</div>
+    </div>
+
+    <div id="menu" class="overlay" role="dialog" aria-modal="true">
+      <div class="card">
+        <h1>Jumping paladin fighter</h1>
+        <p>Jump over the chess pieces to survive. Time your leap to slice them on a diagonal. Miss the timing and it is curtains for our brave paladin.</p>
+        <ul>
+          <li>Tap, click, or press space to jump</li>
+          <li>Speed increases over time</li>
+          <li>High score is saved on your device</li>
+        </ul>
+        <div class="row">
+          <button class="btn" id="playBtn" aria-label="Play">Play</button>
+          <div class="chip">Tip: hold for a higher jump</div>
+        </div>
+        <p class="hint">Made for smiles, no downloads, single file.</p>
+      </div>
+    </div>
+
+    <div id="gameover" class="overlay" hidden role="dialog" aria-modal="true">
+      <div class="card">
+        <h1>Defeated by a pawn</h1>
+        <p>Your watch has ended. Fancy another go</p>
+        <div class="row">
+          <button class="btn" id="retryBtn" aria-label="Retry">Retry</button>
+          <div class="chip">Score <span id="finalScore">0</span></div>
+          <div class="chip">Best <span id="finalBest">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="a11y" aria-live="assertive" id="ann"></div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.max(1, Math.min(2, window.devicePixelRatio||1));
+  let W = canvas.clientWidth, H = canvas.clientHeight;
+  function resize(){
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    canvas.width = W * DPR; canvas.height = H * DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize); resize();
+
+  // HUD elements
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const speedBadge = document.getElementById('speedBadge');
+  const ann = document.getElementById('ann');
+
+  // Menus
+  const menu = document.getElementById('menu');
+  const playBtn = document.getElementById('playBtn');
+  const over = document.getElementById('gameover');
+  const retryBtn = document.getElementById('retryBtn');
+  const finalScore = document.getElementById('finalScore');
+  const finalBest = document.getElementById('finalBest');
+
+  // Game state
+  let running=false, tLast=0, elapsed=0, speed=6, baseSpeed=6, accel=0.00055, dist=0, score=0, best=Number(localStorage.getItem('jp_highscore')||0);
+  bestEl.textContent = best;
+
+  // Input
+  let jumpHeld=false, justPressed=false;
+  const inputDown = e=>{ e.preventDefault(); jumpHeld = true; justPressed = true; };
+  const inputUp = e=>{ e.preventDefault(); jumpHeld = false; };
+  window.addEventListener('mousedown', inputDown);
+  window.addEventListener('mouseup', inputUp);
+  window.addEventListener('touchstart', inputDown, {passive:false});
+  window.addEventListener('touchend', inputUp, {passive:false});
+  window.addEventListener('keydown', e=>{ if(e.code==='Space'){ inputDown(e); }});
+  window.addEventListener('keyup', e=>{ if(e.code==='Space'){ inputUp(e); }});
+
+  // Simple synth with WebAudio so we keep it single file
+  const AudioC = window.AudioContext || window.webkitAudioContext; const actx = new AudioC(); let audioUnlocked=false;
+  function unlock(){ if(!audioUnlocked){
+      const o = actx.createOscillator(); const g = actx.createGain(); o.connect(g); g.connect(actx.destination); g.gain.value=0; o.start(); setTimeout(()=>o.stop(),0.01); audioUnlocked=true;
+  }}
+  ['pointerdown','touchstart','mousedown','keydown'].forEach(ev=>window.addEventListener(ev,()=>actx.resume().then(unlock),{once:true}));
+
+  function beep(type='sine', fStart=440, fEnd=660, time=0.12, vol=0.12){
+    const now = actx.currentTime; const o = actx.createOscillator(); const g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(fStart, now); o.frequency.exponentialRampToValueAtTime(fEnd, now+time);
+    g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(vol, now+0.01); g.gain.exponentialRampToValueAtTime(0.0001, now+time);
+    o.connect(g); g.connect(actx.destination); o.start(now); o.stop(now+time);
+  }
+  const sfx = {
+    jump: ()=>beep('square', 300, 520, 0.18, 0.15),
+    slice: ()=>{ beep('sawtooth', 500, 1000, 0.08, 0.08); setTimeout(()=>beep('triangle', 900, 300, 0.08, 0.06), 40); },
+    die: ()=>{ beep('sawtooth', 220, 110, 0.22, 0.18); setTimeout(()=>beep('square', 170, 80, 0.25, 0.12), 120); },
+    tick: ()=>beep('triangle', 700, 880, 0.06, 0.05),
+  };
+
+  // World
+  const GROUND_Y = () => H*0.8;
+  const gravity = 0.7;
+
+  // Paladin character
+  const player = { x: W*0.22, y: 0, w: 48, h: 60, vy:0, onGround:true, swinging:false, angle:0 };
+  function resetPlayer(){
+    player.x = W*0.22; player.y = GROUND_Y()-player.h; player.vy=0; player.onGround=true; player.swinging=false; player.angle=0;
+  }
+
+  function jump(){
+    if(player.onGround){
+      let power = 14; if(jumpHeld) power = 17; // light variable jump
+      player.vy = -power; player.onGround=false; sfx.jump(); announce('Jump');
+    }
+  }
+
+  // Obstacles: cartoon chess pieces
+  const pieces=[]; // active pieces or slices
+  function spawnPiece(){
+    const size = 54 + Math.random()*18; const type = ['pawn','bishop','rook','knight'][Math.floor(Math.random()*4)];
+    pieces.push({ type, x: W + 40, y: GROUND_Y()-size, w: size*0.7, h:size, sliced:false, vx: -speed, skew:(Math.random()*0.2-0.1) });
+  }
+
+  // Slices
+  const slices=[];
+  function addSliceFrom(piece){
+    // create two halves along a diagonal
+    const diag = Math.random()>0.5 ? 1 : -1; // slope direction
+    const life = 850; // ms
+    const base = { x: piece.x, y: piece.y, w: piece.w, h: piece.h, t: performance.now(), life, alpha:1, diag };
+    slices.push({ ...base, side:-1, vx:-speed-2, vy:-4, ang:-0.35*diag });
+    slices.push({ ...base, side: 1, vx:-speed+0.2, vy:-1, ang: 0.28*diag });
+  }
+
+  // Parallax background elements
+  function drawBackground(t){
+    // Sky gradient
+    const g=ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#2e2fa3'); g.addColorStop(.5,'#583e98'); g.addColorStop(1,'#1d153f');
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+    // Stars
+    ctx.globalAlpha=0.25; ctx.fillStyle='#fff'; for(let i=0;i<60;i++){ const x=((i*97+t*0.02)%W); const y=(i*37)% (H*0.5); ctx.fillRect(x,y,1.5,1.5); }
+    ctx.globalAlpha=1;
+
+    // Giant creepy wood-elf face in the far background
+    const faceX = W*0.62, faceY = H*0.28, faceR = Math.min(W,H)*0.22;
+    ctx.save(); ctx.translate(faceX, faceY);
+      ctx.globalAlpha=0.2; // subtle
+      ctx.fillStyle='#ffe0c7';
+      roundedEllipse(-faceR*0.6,-faceR*0.7, faceR*1.2, faceR*1.5, 60);
+      ctx.fill();
+      // cheeks
+      ctx.fillStyle='rgba(255,120,160,.4)'; roundedEllipse(-faceR*0.45,-faceR*0.15, faceR*0.35, faceR*0.25, 24); ctx.fill();
+      roundedEllipse( faceR*0.1,-faceR*0.15, faceR*0.35, faceR*0.25, 24); ctx.fill();
+      // eyes
+      ctx.fillStyle='#2b2d42'; roundedEllipse(-faceR*0.25,-faceR*0.15, faceR*0.18, faceR*0.12, 20); ctx.fill();
+      roundedEllipse( faceR*0.25- faceR*0.18,-faceR*0.15, faceR*0.18, faceR*0.12, 20); ctx.fill();
+      ctx.fillStyle='#fff'; roundedEllipse(-faceR*0.18,-faceR*0.10, faceR*0.07, faceR*0.05, 12); ctx.fill();
+      roundedEllipse( faceR*0.18- faceR*0.07,-faceR*0.10, faceR*0.07, faceR*0.05, 12); ctx.fill();
+      // nose
+      ctx.fillStyle='rgba(190,120,90,.7)'; roundedEllipse(-faceR*0.06, -faceR*0.02, faceR*0.12, faceR*0.18, 18); ctx.fill();
+      // wrinkly smile
+      ctx.strokeStyle='rgba(60,20,20,.6)'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0, faceR*0.1, faceR*0.28, 0.1*Math.PI, 0.9*Math.PI); ctx.stroke();
+      // pointy ears
+      ctx.fillStyle='rgba(255,224,199,.65)'; ctx.beginPath(); ctx.moveTo(-faceR*0.7,-faceR*0.1); ctx.lineTo(-faceR*1.2, -faceR*0.4); ctx.lineTo(-faceR*0.7, faceR*0.05); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo( faceR*0.6,-faceR*0.1); ctx.lineTo( faceR*1.1, -faceR*0.45); ctx.lineTo( faceR*0.6, faceR*0.05); ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    // Distant hills
+    const hill = (y, c, sp)=>{ ctx.fillStyle=c; ctx.beginPath(); ctx.moveTo(0, H*0.5+y);
+      for(let x=0;x<=W;x+=20){ const k = x/W; const h = 30*Math.sin(k*6 + (t*sp)) + 20*Math.cos(k*2 + 1.7 + t*sp*0.6);
+        ctx.lineTo(x, H*0.6+y + h);
+      }
+      ctx.lineTo(W,H); ctx.lineTo(0,H); ctx.closePath(); ctx.fill(); };
+    hill(-120, '#2a255a', 0.0003);
+    hill(-60,  '#3d2d6e', 0.0005);
+    hill(-10,  '#4c2d7f', 0.0008);
+
+    // Foreground trees parallax
+    const tSpeed= 0.6*speed; ctx.fillStyle='#0e0a2a';
+    for(let i=0;i<8;i++){
+      const x = (W - ((t*0.12 + i*220*tSpeed)% (W+220))) - 100;
+      drawCartoonTree(x, H*0.75, 1.1 + (i%3)*0.2);
+    }
+
+    // Ground
+    ctx.fillStyle='#2a1f4b'; ctx.fillRect(0, GROUND_Y(), W, H-GROUND_Y());
+    // ground stripes for speed sensation
+    ctx.strokeStyle='rgba(255,255,255,.08)'; ctx.lineWidth=2; ctx.setLineDash([10, 14]);
+    ctx.beginPath(); ctx.moveTo((W - (t*0.6 % 24)), GROUND_Y()+12); ctx.lineTo(W, GROUND_Y()+12); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  function drawCartoonTree(x, yBase, scale){
+    ctx.save(); ctx.translate(x,yBase); ctx.scale(scale,scale);
+    ctx.fillStyle='#311d3f'; ctx.fillRect(-8,-80,16,80);
+    ctx.fillStyle='#5a3a8a'; circle(0,-100,30); circle(-22,-88,20); circle(20,-86,24); circle(-8,-118,16);
+    ctx.restore();
+  }
+
+  function circle(x,y,r){ ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); }
+  function roundedEllipse(x,y,w,h,r){ ctx.beginPath(); for(let i=0;i<1;i+=0.01){ const a=i*2*Math.PI; const px=x+w/2 + (w/2)*Math.cos(a); const py=y+h/2 + (h/2)*Math.sin(a); if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);} ctx.closePath(); }
+
+  function drawPaladin(){
+    const {x,y,w,h} = player; ctx.save(); ctx.translate(x,y);
+    // shadow
+    ctx.globalAlpha=0.25; ctx.fillStyle='#000'; circle(w*0.5, h+10, 12 + (player.onGround?0:4)); ctx.globalAlpha=1;
+    // body
+    ctx.fillStyle="#ffe66d"; ctx.fillRect(10, 8, w-20, h-18);
+    // helmet
+    ctx.fillStyle="#cbd5e1"; ctx.fillRect(6, -6, w-12, 20);
+    ctx.fillStyle="#64748b"; ctx.fillRect(6, 8, w-12, 4);
+    // face slit
+    ctx.fillStyle="#0f172a"; ctx.fillRect(12, 0, w-24, 6);
+    // eyes wink while airborne
+    if(!player.onGround){ ctx.fillStyle="#fff"; ctx.fillRect(16,2,6,2); ctx.fillRect(w-22,2,6,2); }
+    // legs
+    ctx.fillStyle="#6ee7b7"; ctx.fillRect(12, h-16, 12, 16); ctx.fillRect(w-24, h-16, 12, 16);
+    // boots
+    ctx.fillStyle="#0ea5e9"; ctx.fillRect(10, h-8, 16, 8); ctx.fillRect(w-26, h-8, 16, 8);
+    // cape flutter
+    ctx.fillStyle="#fb7185"; ctx.beginPath(); ctx.moveTo(10,14); ctx.quadraticCurveTo(-18, 18 + Math.sin(performance.now()*0.01)*4, 4, h-12); ctx.lineTo(10, h-28); ctx.closePath(); ctx.fill();
+    // sword
+    ctx.save(); ctx.translate(w-6, 16); ctx.rotate(player.onGround?0: -0.8 + 0.2*Math.sin(performance.now()*0.02));
+      ctx.fillStyle="#e2e8f0"; ctx.fillRect(0,-3, 28, 6); // blade
+      ctx.fillStyle="#fde047"; ctx.fillRect(-5,-6, 8, 12); // guard
+      ctx.fillStyle="#ef4444"; ctx.fillRect(-8,-4, 4, 8); // pommel
+    ctx.restore();
+    ctx.restore();
+  }
+
+  function drawPiece(p){
+    ctx.save(); ctx.translate(p.x, p.y); ctx.fillStyle = '#c084fc';
+    // wobble
+    const wob = Math.sin(performance.now()*0.005 + p.x*0.05)*2;
+    ctx.transform(1,0,p.skew,1,0,0);
+    switch(p.type){
+      case 'pawn':
+        circle(p.w*0.35, 8+wob, p.w*0.18);
+        ctx.fillRect(8, 18, p.w*0.55, p.h-18);
+        break;
+      case 'rook':
+        ctx.fillRect(6, 16, p.w*0.6, p.h-16);
+        ctx.fillStyle='#a78bfa'; ctx.fillRect(6, 0, p.w*0.6, 18);
+        ctx.fillStyle='#c084fc';
+        for(let i=0;i<3;i++){ ctx.fillRect(6+i*(p.w*0.2), 0, p.w*0.12, 10); }
+        break;
+      case 'bishop':
+        circle(p.w*0.35, 10+wob, p.w*0.2);
+        ctx.beginPath(); ctx.moveTo(8, 20); ctx.quadraticCurveTo(p.w*0.35, -10, p.w*0.7, 20); ctx.lineTo(p.w*0.6, p.h); ctx.lineTo(8, p.h); ctx.closePath(); ctx.fill();
+        break;
+      case 'knight':
+        ctx.beginPath(); ctx.moveTo(8, p.h); ctx.lineTo(8, 28); ctx.quadraticCurveTo(p.w*0.2, 8, p.w*0.55, 18); ctx.lineTo(p.w*0.7, 28); ctx.lineTo(p.w*0.6, p.h); ctx.closePath(); ctx.fill();
+        circle(p.w*0.5, 18, 3);
+        break;
+    }
+    // base
+    ctx.fillRect(4, p.h-6, p.w*0.65, 8);
+    ctx.restore();
+  }
+
+  function drawSlice(s){
+    const age = performance.now() - s.t; const k = Math.min(1, age/s.life); const alpha = 1-k; s.alpha = alpha;
+    const x = s.x + s.vx * (age*0.016); const y = s.y + s.vy * (age*0.02) + 0.2*(age*0.02)*(age*0.02);
+    ctx.save(); ctx.globalAlpha = Math.max(0, alpha); ctx.translate(x,y); ctx.rotate(s.ang * k);
+    ctx.fillStyle = '#c084fc';
+    // triangular halves along a diagonal
+    ctx.beginPath();
+    if(s.side<0){ ctx.moveTo(0, s.h); ctx.lineTo(s.w, 0); ctx.lineTo(0, 0); }
+    else { ctx.moveTo(s.w, 0); ctx.lineTo(s.w, s.h); ctx.lineTo(0, s.h); }
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function update(dt){
+    // speed and distance
+    elapsed += dt; speed = baseSpeed + elapsed*accel*100; dist += speed*dt*0.06; speedBadge.textContent = `Speed x${(speed/baseSpeed).toFixed(1)}`;
+
+    // spawn logic
+    if(pieces.length<4){
+      if(Math.random() < 0.015 + Math.min(0.02, elapsed*0.00002)) spawnPiece();
+    }
+
+    // update pieces
+    for(let i=pieces.length-1;i>=0;i--){
+      const p = pieces[i]; p.x -= speed; if(p.x + p.w < -40){ pieces.splice(i,1); continue; }
+      // check collision / slice zone
+      const pxCenter = player.x + player.w*0.5; const withinX = (pxCenter > p.x && pxCenter < p.x + p.w);
+      if(withinX){
+        const playerFeet = player.y + player.h; const cutLine = p.y + p.h*0.55; // must be above this to cut
+        if(!p.sliced && !player.onGround && playerFeet < cutLine){
+          p.sliced = true; addSliceFrom(p); pieces.splice(i,1); score++; scoreEl.textContent = score; sfx.slice();
+        } else {
+          // AABB collision
+          const collide = !(player.x + player.w < p.x || player.x > p.x + p.w || player.y + player.h < p.y || player.y > p.y + p.h);
+          if(collide){ gameOver(); return; }
+        }
+      }
+    }
+
+    // player physics
+    player.vy += gravity; player.y += player.vy; if(player.y + player.h >= GROUND_Y()){ player.y = GROUND_Y() - player.h; player.vy = 0; if(!player.onGround){ player.onGround=true; }}
+
+    // input handling for jump
+    if(justPressed){ jump(); justPressed=false; }
+
+    // prune slices
+    for(let i=slices.length-1;i>=0;i--){ if(performance.now()-slices[i].t > slices[i].life) slices.splice(i,1); }
+  }
+
+  function draw(t){
+    drawBackground(t);
+    // pieces and slices
+    for(const s of slices) drawSlice(s);
+    for(const p of pieces) drawPiece(p);
+    drawPaladin();
+  }
+
+  function loop(now){
+    if(!running){ tLast=now; return; }
+    const dt = Math.min(33, now - tLast); tLast = now; // cap delta
+    update(dt/16.67); draw(now);
+    requestAnimationFrame(loop);
+  }
+
+  function start(){
+    running=true; menu.hidden=true; over.hidden=true; resetWorld(); requestAnimationFrame(loop); announce('Game started');
+  }
+
+  function resetWorld(){
+    score=0; scoreEl.textContent='0'; elapsed=0; dist=0; speed=baseSpeed; pieces.length=0; slices.length=0; resetPlayer();
+    for(let i=0;i<3;i++){ setTimeout(spawnPiece, i*400); }
+  }
+
+  function gameOver(){
+    running=false; sfx.die(); announce('Game over');
+    finalScore.textContent = score; best = Math.max(best, score); localStorage.setItem('jp_highscore', best); bestEl.textContent = best; finalBest.textContent = best; over.hidden=false;
+  }
+
+  function announce(msg){ ann.textContent = msg; }
+
+  // Buttons
+  playBtn.addEventListener('click', start);
+  retryBtn.addEventListener('click', ()=>{ over.hidden=true; start(); });
+
+  // Pause when tab hidden to avoid runaway speed
+  document.addEventListener('visibilitychange', ()=>{ if(document.hidden){ running=false; } });
+
+  // Start screen render loop so background animates under menu
+  (function idle(){ draw(performance.now()); requestAnimationFrame(idle); })();
+})();
+</script>
+</body>
+</html>
